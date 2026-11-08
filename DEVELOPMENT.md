@@ -19,7 +19,7 @@ ctest --test-dir build -C Release --output-on-failure
 Пакет — `build/packages/bz-mcp-<версия>-<система>-<архитектура>.bzmod`. Тесты занимают порт 47399 на 127.0.0.1.
 
 ## Выпуск
-Поднять `version` в `module.json` → коммит → тег `vX.Y.Z` той же версии. GitHub соберёт Windows (MSYS2 MinGW, как BreezeCAD), Linux (glibc 2.28) и macOS (Apple Silicon), прогонит тесты и создаст выпуск с тремя `.bzmod`.
+Поднять `version` в `module.json` → в `main` → на GitHub **Releases → Draft a new release**, тег `vX.Y.Z` той же версии → **Publish**. GitHub соберёт Windows (MSYS2 MinGW, как BreezeCAD), Linux (glibc 2.28) и macOS (Apple Silicon), прогонит тесты и приложит к выпуску три `.bzmod`.
 
 ## Обновить копии из BreezeCAD
 `scripts/update-sdk.sh` (из `main`) или `scripts/update-sdk.sh v0.2.6` (из выпуска) — обновляет `bz_module.h` и `Paths.*`.

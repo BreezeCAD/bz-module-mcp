@@ -1,0 +1,3 @@
+platform/Paths.{h,cpp} из BreezeCAD/breezecad (src/platform), next @ 51bfa9b, 2026-11-08 — без изменений.
+Нужны мосту bz-mcp-bridge, чтобы найти папку настроек там же, где программа.
+Обновить: scripts/update-sdk.sh

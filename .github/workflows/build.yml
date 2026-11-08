@@ -1,0 +1,93 @@
+# Сборка модуля MCP под Windows, Linux и macOS + тесты.
+# Тег vX.Y.Z (версия = "version" в module.json) → выпуск с пакетами .bzmod.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    # MSYS2 MinGW — тем же компилятором собирается BreezeCAD.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-python
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 300
+      - uses: actions/upload-artifact@v4
+        with: { name: bzmod-windows, path: build/packages/*.bzmod, if-no-files-found: error }
+
+  linux:
+    # glibc 2.28, как у BreezeCAD: модуль работает и на старых дистрибутивах.
+    runs-on: ubuntu-latest
+    container: almalinux:8
+    steps:
+      - name: Tools
+        run: dnf install -y -q gcc-toolset-13-gcc-c++ make cmake git python3
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          source /opt/rh/gcc-toolset-13/enable
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: |
+          source /opt/rh/gcc-toolset-13/enable
+          cmake --build build -j4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 300
+      - uses: actions/upload-artifact@v4
+        with: { name: bzmod-linux, path: build/packages/*.bzmod, if-no-files-found: error }
+
+  macos:
+    runs-on: macos-15   # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
+      - name: Build
+        run: cmake --build build -j4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 300
+      - uses: actions/upload-artifact@v4
+        with: { name: bzmod-macos, path: build/packages/*.bzmod, if-no-files-found: error }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches module.json
+        run: |
+          version=$(python3 -c "import json;print(json.load(open('module.json',encoding='utf-8'))['version'])")
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::тег $GITHUB_REF_NAME, а в module.json версия $version"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with: { pattern: bzmod-*, path: packages, merge-multiple: true }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" packages/*.bzmod --title "$GITHUB_REF_NAME" --generate-notes

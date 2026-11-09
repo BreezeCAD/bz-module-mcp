@@ -69,18 +69,24 @@ cmake --build --preset linux-release
 
 | Группа | Инструменты |
 | --- | --- |
-| Документы | `app_documents`, `app_new_part`, `app_open`, `app_activate`, `doc_save`, `doc_export`, `doc_undo`, `doc_redo`, `doc_close` |
+| Документы | `app_documents`, `app_new_part`, `app_open`, `app_open_project` (распаковать .bzp и открыть), `app_activate`, `doc_save`, `doc_export` (STEP, STL, 3MF; сборку — проектом .bzp), `doc_undo`, `doc_redo`, `doc_close` |
 | Деталь | `part_tree`, `part_feature`, `part_parameters`, `part_properties`, `part_set_parameter`, `part_set_variable`, `part_set_info`, `part_rename`, `part_suppress`, `part_delete`, `part_move_feature`, `part_set_end_marker` |
-| Эскиз | `sketch_create` (на плоскости, рабочей плоскости или плоской грани), `sketch_add`, `sketch_constrain`, `sketch_remove`, `sketch_get` |
+| Эскиз | `sketch_create` (на плоскости, рабочей плоскости или плоской грани), `sketch_add` (отрезки, прямоугольники, окружности, дуги, пазы, многоугольники, точки, сплайны, эллипсы), `sketch_constrain`, `sketch_edit` (скругление, смещение, обрезка, удлинение, разбиение, зеркало, сдвиг, копия, поворот, масштаб), `sketch_project` (рёбра тела в эскиз), `sketch_remove`, `sketch_get` |
 | Грани и рёбра | `part_faces`, `part_edges` (номера с фильтрами: нормаль, тип, радиус, «ближе к точке»), `part_measure` |
 | Тела из эскизов | `feature_extrude`, `feature_revolve`, `feature_sweep`, `feature_loft`, `feature_coil` |
 | Операции | `feature_hole` (простое, цековка, зенковка), `feature_thread` (винтовая ISO-резьба), `feature_fillet`, `feature_chamfer`, `feature_shell`, `feature_pattern` (прямоугольный и круговой), `feature_mirror`, `feature_section` |
+| Листовой металл | `sheet_create`, `sheet_flange`, `sheet_cut`, `sheet_flat_pattern` (развёртка, DXF) |
+| Редактор DXF | `dxf_open`, `dxf_check`, `dxf_select`, `dxf_save` |
 | Любая операция | `part_feature_types`, `part_create_feature`, `part_edit_feature` — по полям, как в файле .bzc (и для операций будущих модулей) |
 | Рабочая геометрия | `work_plane` (смещение, середина, угол, три точки, касательная), `work_axis`, `work_point` |
 | Вид | `view_snapshot` — картинка модели (PNG; модель её видит), `view_set` — камера и стиль |
 | Внешний вид | `appearance_list`, `part_set_appearance` (телу или граням; материал или цвет) |
-| Библиотека | `library_list`, `library_sizes`, `library_make_part` — стандартные изделия ГОСТ/ISO/DIN |
-| Сборка | `assembly_new`, `assembly_components`, `assembly_place`, `assembly_faces`, `assembly_constrain` (зависимости и соединения), `assembly_edit_constraint`, `assembly_move`, `assembly_ground`, `assembly_remove`, `assembly_clashes` |
+| Библиотека | `library_list`, `library_sizes`, `library_make_part` — стандартные изделия ГОСТ/ISO/DIN и пакеты проката; `library_add_pack` (.bzlib), `library_save_part`, `library_remove_part` — мои изделия |
+| Сборка | `assembly_new`, `assembly_components`, `assembly_place` (деталь или стандартное изделие, с вводимыми размерами), `assembly_faces`, `assembly_constrain` (зависимости и соединения), `assembly_edit_constraint`, `assembly_move`, `assembly_ground`, `assembly_pattern` (массив компонента), `assembly_remove`, `assembly_clashes`, `assembly_edit_in_place`, `assembly_return_to_assembly`, `assembly_project_edge`, `assembly_create_part` |
+
+Набор зависит от версии BreezeCAD: новые команды (`sketch_edit`, `sketch_project`,
+`assembly_pattern`, `library_remove_part`, `app_open_project`) — с версии, в которой
+слит PR BreezeCAD/breezecad#93.
 
 Грани и рёбра называются номерами из `part_faces` / `part_edges` (в сборке —
 `assembly_faces`): номер действует до следующего изменения детали, а в

@@ -117,30 +117,58 @@ Json Protocol::Host(const std::string& command, const Json& args) {
 }
 
 Json Protocol::ListTools() {
-    const Json reply = Host("commands.list", Json::object());
+    std::size_t revision;
+    {
+        std::lock_guard lock(myCatalogMutex);
+        revision = myCatalogRevision;
+    }
+    return {{"tools", UpdateCatalog(Host("commands.list", Json::object()), revision)}};
+}
+
+Json Protocol::UpdateCatalog(const Json& reply) {
+    return UpdateCatalog(reply, std::nullopt);
+}
+
+Json Protocol::UpdateCatalog(const Json& reply, std::optional<std::size_t> expectedRevision) {
+    if (!reply.is_object()) throw std::runtime_error("BreezeCAD вернул неверный каталог команд");
     if (!reply.value("ok", false)) throw std::runtime_error(reply.value("error", "commands.list failed"));
-    myCommands.clear();
+    const auto catalog = reply.find("result");
+    if (catalog == reply.end() || !catalog->is_array()) throw std::runtime_error("BreezeCAD вернул неверный каталог команд");
+    std::map<std::string, std::string> commands;
     Json tools = Json::array();
-    for (const Json& c : reply["result"]) {
+    for (const Json& c : *catalog) {
         const std::string command = c.value("name", "");
         if (command.empty() || command == "commands.list") continue;
         const std::string name = ToolName(command);
-        myCommands[name]       = command;
+        commands[name]         = command;
         Json tool = {{"name", name}, {"description", c.value("description", "")}, {"inputSchema", c.value("inputSchema", Json::object())}};
         const bool changes   = c.value("changes", false);
         tool["annotations"] = {{"readOnlyHint", !changes}, {"destructiveHint", false}, {"openWorldHint", false}};
         tools.push_back(std::move(tool));
     }
-    return {{"tools", std::move(tools)}};
+    std::lock_guard lock(myCatalogMutex);
+    // A manual refresh may have finished while this HTTP request was waiting.
+    if (expectedRevision && *expectedRevision != myCatalogRevision) return myTools;
+    myTools = std::move(tools);
+    myCommands = std::move(commands);
+    ++myCatalogRevision;
+    return myTools;
 }
 
 Json Protocol::CallTool(const Json& params) {
     const std::string name = params.value("name", "");
-    if (myCommands.empty()) ListTools();   // a client that skipped tools/list
+    std::unique_lock lock(myCatalogMutex);
+    if (myCommands.empty()) {
+        lock.unlock();
+        ListTools();   // a client that skipped tools/list
+        lock.lock();
+    }
     const auto it = myCommands.find(name);
     if (it == myCommands.end()) return Text("Нет инструмента «" + name + "»", true);
+    const std::string command = it->second;
+    lock.unlock();
     const Json args  = params.contains("arguments") && params["arguments"].is_object() ? params["arguments"] : Json::object();
-    const Json reply = Host(it->second, args);
+    const Json reply = Host(command, args);
     if (!reply.value("ok", false)) return Text(reply.value("error", "Ошибка"), true);
     Json result = reply["result"];
     // A picture (view.snapshot) goes as an image the model can see, the rest as text.

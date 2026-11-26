@@ -20,12 +20,16 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string_view>
 #include <string>
 #include <thread>
 
 namespace {
 
 const BzHostApi* gHost = nullptr;
+constexpr char kSettings[] = "mcp-settings";
+constexpr char kCatalogRequest[] = R"({"command":"commands.list","args":{}})";
 
 /// A host-style failed reply: {"ok": false, "error": text}.
 std::string Failed(const std::string& text) { return nlohmann::json{{"ok", false}, {"error", text}}.dump(); }
@@ -39,6 +43,17 @@ struct Job {
 
 class Server {
 public:
+    Server() : myProtocol([this](const std::string& request) { return Execute(request); }, gHost->host_version()) {}
+
+    const bzmcp::Connection& Connection() const { return myConnection; }
+
+    std::size_t RefreshCatalog() {
+        const char* reply = nullptr;
+        if (gHost->execute(kCatalogRequest, &reply) != BZ_OK || !reply)
+            throw std::runtime_error("BreezeCAD не вернул каталог команд");
+        return myProtocol.UpdateCatalog(nlohmann::json::parse(reply, nullptr, false)).size();
+    }
+
     bool Start(const bzmcp::Connection& c, std::string& error) {
         myConnection = c;
         myListener   = bzmcp::Socket::Listen(c.port, &error);
@@ -95,7 +110,6 @@ private:
     }
 
     void Loop() {
-        bzmcp::Protocol protocol([this](const std::string& r) { return Execute(r); }, gHost->host_version());
         while (true) {
             {
                 std::lock_guard lock(myMutex);
@@ -104,11 +118,11 @@ private:
             bzmcp::Socket client = myListener.Accept(250);
             if (!client.IsOpen()) continue;
             client.SetTimeout(5000);   // a stuck client cannot hold the program's exit for long
-            client.WriteAll(Answer(client, protocol));
+            client.WriteAll(Answer(client));
         }
     }
 
-    std::string Answer(const bzmcp::Socket& client, bzmcp::Protocol& protocol) const {
+    std::string Answer(const bzmcp::Socket& client) {
         using bzmcp::HttpResponse;
         const auto msg = bzmcp::ReadHttp(client);
         if (!msg) return HttpResponse(400, "Bad Request", "text/plain", "bad request");
@@ -125,11 +139,12 @@ private:
         if (method == "GET") return HttpResponse(405, "Method Not Allowed", "text/plain", "no event stream");   // no server push
         if (method == "DELETE") return HttpResponse(200, "OK", "", "");                                     // no sessions to end
         if (method != "POST") return HttpResponse(405, "Method Not Allowed", "text/plain", "POST only");
-        const auto reply = protocol.Handle(msg->body);
+        const auto reply = myProtocol.Handle(msg->body);
         if (!reply) return HttpResponse(202, "Accepted", "", "");
         return HttpResponse(200, "OK", "application/json; charset=utf-8", *reply);
     }
 
+    bzmcp::Protocol                  myProtocol;
     bzmcp::Connection                myConnection;
     bzmcp::Socket                    myListener;
     std::thread                      myThread;
@@ -148,6 +163,38 @@ std::filesystem::path Utf8Path(const char* text) {
     return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 
+void ShowSettings(const std::string& status = {}) {
+    using Json = nlohmann::json;
+    Json items = Json::array({
+        {{"type", "text"}, {"text", "Адрес MCP-сервера"}},
+        {{"type", "mono"}, {"text", gServer->Connection().Url()}}
+    });
+    if (!status.empty()) items.push_back({{"type", "note"}, {"text", status}});
+    items.push_back({{"type", "buttons"}, {"items", Json::array({
+        {{"id", "refresh"}, {"label", "Запросить команды"}}
+    })}});
+    const Json panel = {{"id", kSettings}, {"title", "Настройки MCP"}, {"items", std::move(items)}};
+    gHost->show_panel(panel.dump().c_str());
+}
+
+void McpAction(const char* id) {
+    if (gServer && id && std::string_view(id) == kSettings) ShowSettings();
+}
+
+void McpPanelEvent(const char* eventJson) {
+    if (!gServer || !eventJson) return;
+    const auto event = nlohmann::json::parse(eventJson, nullptr, false);
+    if (!event.is_object() || !event.contains("panel") || event["panel"] != kSettings ||
+        !event.contains("id") || event["id"] != "refresh") return;
+    std::string status;
+    try {
+        status = "Доступно команд: " + std::to_string(gServer->RefreshCatalog());
+    } catch (const std::exception& error) {
+        status = "Не удалось обновить команды. " + std::string(error.what());
+    }
+    ShowSettings(status);
+}
+
 int32_t McpInit(const BzHostApi* host) {
     if (!host || host->abi_version != BZ_MODULE_ABI_VERSION || !BZ_HAS(host, execute) || !BZ_HAS(host, config_dir))
         return BZ_EFAIL;   // a host before 0.3: no commands to offer
@@ -164,6 +211,8 @@ int32_t McpInit(const BzHostApi* host) {
         gServer.reset();
         return BZ_EFAIL;
     }
+    if (BZ_HAS(host, add_action) && BZ_HAS(host, show_panel))
+        host->add_action(R"({"id":"mcp-settings","label":"Настройки MCP","icon":"ui-settings","menu":"settings"})");
     Log(BZ_LOG_INFO, "MCP-сервер слушает " + connection->Url());
     return BZ_OK;
 }
@@ -179,7 +228,7 @@ void McpMainTick() {
     if (gServer) gServer->RunJobs();
 }
 
-const BzModuleApi kApi = {BZ_MODULE_ABI_VERSION, sizeof(BzModuleApi), &McpInit, &McpShutdown, &McpMainTick};
+const BzModuleApi kApi = {BZ_MODULE_ABI_VERSION, sizeof(BzModuleApi), &McpInit, &McpShutdown, &McpMainTick, &McpAction, &McpPanelEvent};
 
 } // namespace
 

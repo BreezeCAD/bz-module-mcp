@@ -34,6 +34,20 @@ namespace {
 std::atomic<bool> gWantTick{false};
 std::string       gConfigDir;
 std::string       gReply;
+Json              gSettingsAction;
+Json              gPanel;
+bool              gExtraCommand = false;
+bool              gCatalogError = false;
+
+int32_t AddAction(const char* json) {
+    gSettingsAction = Json::parse(json);
+    return BZ_OK;
+}
+
+int32_t ShowPanel(const char* json) {
+    gPanel = Json::parse(json);
+    return BZ_OK;
+}
 
 const char* HostVersion() { return "0.2.5"; }
 void        HostLog(int32_t, const char* message) { MESSAGE("журнал: " << (message ? message : "")); }
@@ -47,13 +61,19 @@ const char* ConfigDir() { return gConfigDir.c_str(); }
 /// Two commands, as in the protocol tests.
 int32_t Execute(const char* request, const char** reply) {
     const Json r = Json::parse(request);
-    if (r["command"] == "commands.list")
-        gReply = Json{{"ok", true},
+    if (r["command"] == "commands.list" && gCatalogError) {
+        gReply = R"({"ok":false,"error":"каталог занят"})";
+    } else if (r["command"] == "commands.list") {
+        Json catalog = Json{{"ok", true},
                       {"result",
                        {{{"name", "commands.list"}, {"description", "list"}, {"inputSchema", {{"type", "object"}}}},
-                        {{"name", "part.set_parameter"}, {"description", "set"}, {"inputSchema", {{"type", "object"}}}, {"changes", true}}}}}
-                     .dump();
-    else
+                        {{"name", "part.set_parameter"}, {"description", "set"}, {"inputSchema", {{"type", "object"}}}, {"changes", true}}}}};
+        if (gExtraCommand)
+            catalog["result"].push_back({{"name", "example.probe"}, {"inputSchema", {{"type", "object"}}}});
+        gReply = catalog.dump();
+    } else if (r["command"] == "example.probe") {
+        gReply = R"({"ok":true,"result":"ready"})";
+    } else
         gReply = R"({"ok":false,"error":"нет такой команды"})";
     *reply = gReply.c_str();
     return BZ_OK;
@@ -73,6 +93,8 @@ BzHostApi FakeHost() {
     h.request_main     = RequestMain;
     h.execute          = Execute;
     h.config_dir       = ConfigDir;
+    h.add_action       = AddAction;
+    h.show_panel       = ShowPanel;
     return h;
 }
 
@@ -128,6 +150,26 @@ TEST_CASE("MCP module: serves requests through the main thread and shuts down cl
     const std::string list = ask("test-token-1234567890", R"({"jsonrpc":"2.0","id":2,"method":"tools/list"})");
     CHECK(list.rfind("HTTP/1.1 200", 0) == 0);
     CHECK(list.find("part_set_parameter") != std::string::npos);
+    REQUIRE(BZ_HAS(module, on_action));
+    REQUIRE(BZ_HAS(module, on_panel_event));
+    CHECK(gSettingsAction["menu"] == "settings");
+    module->on_action("mcp-settings");
+    CHECK(gPanel["id"] == "mcp-settings");
+    CHECK(gPanel.dump().find("test-token") == std::string::npos);
+
+    gExtraCommand = true;
+    constexpr const char* probe = R"({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"example_probe"}})";
+    CHECK(ask("test-token-1234567890", probe).find("Нет инструмента") != std::string::npos);
+    module->on_panel_event(R"({"panel":"mcp-settings","id":"refresh"})");
+    CHECK(gPanel.dump().find("Доступно команд: 2") != std::string::npos);
+    CHECK(ask("test-token-1234567890", probe).find("ready") != std::string::npos);
+
+    gCatalogError = true;
+    module->on_panel_event(R"({"panel":"mcp-settings","id":"refresh"})");
+    CHECK(gPanel.dump().find("каталог занят") != std::string::npos);
+    CHECK(ask("test-token-1234567890", probe).find("ready") != std::string::npos);
+    gCatalogError = false;
+
     const std::string note = ask("test-token-1234567890", R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
     CHECK(note.rfind("HTTP/1.1 202", 0) == 0);
 

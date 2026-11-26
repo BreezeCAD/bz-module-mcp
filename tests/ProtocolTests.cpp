@@ -75,6 +75,21 @@ TEST_CASE("MCP: host commands become tools") {
     CHECK(Call(p, "tools/call", {{"name", "no_such"}})["result"]["isError"] == true);
 }
 
+TEST_CASE("MCP: a manual catalog refresh wins over an older in-flight list") {
+    FakeHost host;
+    bzmcp::Protocol* protocol = nullptr;
+    bzmcp::Protocol p([&](const std::string& request) {
+        const auto previous = host(request);
+        protocol->UpdateCatalog(Json::parse(R"({"ok":true,"result":[{"name":"example.probe"}]})"));
+        return previous;
+    }, "0.2.0");
+    protocol = &p;
+
+    const Json tools = Call(p, "tools/list")["result"]["tools"];
+    REQUIRE(tools.size() == 1);
+    CHECK(tools[0]["name"] == "example_probe");
+}
+
 TEST_CASE("MCP: a client that calls a tool without listing first") {
     FakeHost        host;
     bzmcp::Protocol p([&](const std::string& r) { return host(r); }, "0.2.0");
